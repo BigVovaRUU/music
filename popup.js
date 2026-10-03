@@ -77,6 +77,10 @@ function getCurrentTrack() {
   return tracks.find((track) => track.id === playback.currentTrackId) || tracks[0] || null;
 }
 
+function getTrackQueue() {
+  return tracks.map((track) => track.id);
+}
+
 function renderPlayer() {
   const track = getCurrentTrack();
   const hasTracks = tracks.length > 0;
@@ -129,7 +133,7 @@ function trackRowTemplate(track) {
   row.querySelector(".track-title").textContent = track.title;
   row.querySelector(".track-filename").textContent = track.fileName;
 
-  const playTrack = () => sendAudio("play-track", { trackId: track.id });
+  const playTrack = () => sendAudio("play-track", { trackId: track.id, trackIds: getTrackQueue() });
   row.addEventListener("click", (event) => {
     if (!event.target.closest(".remove-button")) playTrack();
   });
@@ -143,6 +147,7 @@ function trackRowTemplate(track) {
     if (track.id === playback.currentTrackId) await sendAudio("stop");
     await deleteTrack(track.id);
     tracks = tracks.filter((item) => item.id !== track.id);
+    await sendAudio("set-queue", { trackIds: getTrackQueue() });
     render();
     showToast("Трек удалён");
   });
@@ -186,6 +191,7 @@ async function importFiles(files) {
   }
 
   tracks = await getTracks();
+  await sendAudio("set-queue", { trackIds: getTrackQueue() });
   render();
   showToast(audioFiles.length === 1 ? "Трек добавлен" : `Добавлено треков: ${audioFiles.length}`);
 }
@@ -194,7 +200,7 @@ function stepTrack(direction) {
   if (!tracks.length) return;
   const currentIndex = Math.max(0, tracks.findIndex((track) => track.id === playback.currentTrackId));
   const nextIndex = (currentIndex + direction + tracks.length) % tracks.length;
-  sendAudio("play-track", { trackId: tracks[nextIndex].id });
+  sendAudio("play-track", { trackId: tracks[nextIndex].id, trackIds: getTrackQueue() });
 }
 
 function togglePlayback() {
@@ -202,9 +208,9 @@ function togglePlayback() {
   if (playback.isPlaying) {
     sendAudio("pause");
   } else if (playback.currentTrackId) {
-    sendAudio("resume");
+    sendAudio("resume", { trackIds: getTrackQueue() });
   } else {
-    sendAudio("play-track", { trackId: tracks[0].id });
+    sendAudio("play-track", { trackId: tracks[0].id, trackIds: getTrackQueue() });
   }
 }
 
@@ -224,7 +230,9 @@ elements.nextButton.addEventListener("click", () => stepTrack(1));
 elements.loopButton.addEventListener("click", toggleLoop);
 elements.loopTopButton.addEventListener("click", toggleLoop);
 elements.progress.addEventListener("input", () => setRangeFill(elements.progress));
-elements.progress.addEventListener("change", () => sendAudio("seek", { time: Number(elements.progress.value) }));
+elements.progress.addEventListener("change", () =>
+  sendAudio("seek", { time: Number(elements.progress.value), trackIds: getTrackQueue() }),
+);
 elements.volume.addEventListener("input", () => {
   setRangeFill(elements.volume);
   sendAudio("set-volume", { volume: Number(elements.volume.value) });
@@ -247,6 +255,7 @@ async function initialize() {
   tracks = loadedTracks;
   playback = { ...playback, ...saved.playbackState };
   render();
+  await sendAudio("set-queue", { trackIds: getTrackQueue() });
   await sendAudio("get-state");
 }
 

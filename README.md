@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/BigVovaRUU/music/releases"><img alt="Версия 1.0.1" src="https://img.shields.io/badge/version-1.0.1-D55747?style=flat-square" /></a>
+  <a href="https://github.com/BigVovaRUU/music/releases"><img alt="Версия 1.0.2" src="https://img.shields.io/badge/version-1.0.2-D55747?style=flat-square" /></a>
   <img alt="Chrome Manifest V3" src="https://img.shields.io/badge/Chrome-Manifest_V3-EFE6D8?style=flat-square&logo=googlechrome&logoColor=101414" />
   <img alt="Минимальная версия Chrome 109" src="https://img.shields.io/badge/Chrome-109%2B-4285F4?style=flat-square&logo=googlechrome&logoColor=white" />
   <img alt="Vanilla JavaScript" src="https://img.shields.io/badge/JavaScript-Vanilla-F7DF1E?style=flat-square&logo=javascript&logoColor=101414" />
@@ -42,7 +42,8 @@
 
 | Возможность | Как это работает |
 | --- | --- |
-| Непрерывный повтор | `AudioBufferSourceNode` воспроизводит один трек в режиме loop |
+| Непрерывный повтор | Следующая копия единственного трека заранее запускается с плавным перекрытием |
+| Переход между треками | Следующий трек декодируется заранее и начинается за 5 секунд до конца текущего |
 | Фоновое воспроизведение | Offscreen-документ продолжает работу после закрытия popup |
 | Локальная библиотека | Файлы сохраняются в IndexedDB внутри профиля расширения |
 | Управление проигрывателем | Play/pause, перемотка, громкость, предыдущий и следующий трек |
@@ -200,9 +201,9 @@ node --check offscreen.js
 - [x] Локальная библиотека аудиофайлов
 - [x] Фоновое воспроизведение
 - [x] Непрерывный loop одного трека
+- [x] Пятисекундный crossfade между треками
 - [x] Громкость, перемотка и переключение композиций
 - [ ] Плейлисты для разных жанров манги
-- [ ] Fade-in и fade-out
 - [ ] Горячие клавиши
 - [ ] Импорт и экспорт настроек
 - [ ] Публикация в Chrome Web Store

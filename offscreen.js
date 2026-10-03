@@ -1,12 +1,25 @@
 import { getTrack } from "./db.js";
 
+const CROSSFADE_SECONDS = 5;
+
 let audioContext;
-let gainNode;
+let masterGainNode;
 let sourceNode;
+let sourceGainNode;
 let audioBuffer;
 let startedAt = 0;
 let pausedAt = 0;
-let loadingTrackId = null;
+let queueTrackIds = [];
+let transitionTimer;
+let transitionFinalizeTimer;
+let transitionSourceNode;
+let transitionGainNode;
+let transitionTrackId;
+let transitionBuffer;
+let transitionStartedAt = 0;
+let playbackGeneration = 0;
+
+const bufferCache = new Map();
 
 const state = {
   currentTrackId: null,
@@ -20,8 +33,7 @@ const state = {
 
 function getCurrentTime() {
   if (!state.isPlaying || !audioContext || !state.duration) return pausedAt;
-  const elapsed = Math.max(0, audioContext.currentTime - startedAt);
-  return state.loopEnabled ? elapsed % state.duration : Math.min(elapsed, state.duration);
+  return Math.min(Math.max(0, audioContext.currentTime - startedAt), state.duration);
 }
 
 async function emitState() {
@@ -34,82 +46,222 @@ async function emitState() {
 function ensureAudioGraph() {
   if (!audioContext) {
     audioContext = new AudioContext();
-    gainNode = audioContext.createGain();
-    gainNode.gain.value = state.volume;
-    gainNode.connect(audioContext.destination);
+    masterGainNode = audioContext.createGain();
+    masterGainNode.gain.value = state.volume;
+    masterGainNode.connect(audioContext.destination);
   }
 }
 
-function stopSource() {
-  if (!sourceNode) return;
-  sourceNode.onended = null;
+function stopNode(node) {
+  if (!node) return;
+  node.onended = null;
   try {
-    sourceNode.stop();
+    node.stop();
   } catch (_error) {
-    // A stopped AudioBufferSourceNode cannot be stopped twice.
+    // AudioBufferSourceNode can only be stopped once.
   }
-  sourceNode.disconnect();
-  sourceNode = null;
+  node.disconnect();
 }
 
-async function loadTrack(trackId) {
-  if (state.currentTrackId === trackId && audioBuffer) return;
-  if (loadingTrackId === trackId) return;
+function clearTransitionTimers() {
+  clearTimeout(transitionTimer);
+  clearTimeout(transitionFinalizeTimer);
+  transitionTimer = undefined;
+  transitionFinalizeTimer = undefined;
+}
 
-  loadingTrackId = trackId;
-  const isSameTrack = state.currentTrackId === trackId;
+function stopAllSources() {
+  playbackGeneration += 1;
+  clearTransitionTimers();
+  stopNode(sourceNode);
+  stopNode(transitionSourceNode);
+  sourceNode = null;
+  sourceGainNode = null;
+  transitionSourceNode = null;
+  transitionGainNode = null;
+  transitionTrackId = null;
+  transitionBuffer = null;
+}
+
+async function getTrackBuffer(trackId) {
+  if (bufferCache.has(trackId)) return bufferCache.get(trackId);
+
   const track = await getTrack(trackId);
   if (!track) throw new Error("Трек не найден. Добавьте его снова.");
 
   ensureAudioGraph();
-  const arrayBuffer = await track.blob.arrayBuffer();
-  audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-  state.currentTrackId = trackId;
-  state.duration = audioBuffer.duration;
-  pausedAt = isSameTrack ? Math.min(pausedAt, state.duration) : 0;
-  loadingTrackId = null;
+  const decoded = await audioContext.decodeAudioData(await track.blob.arrayBuffer());
+  bufferCache.set(trackId, decoded);
+  return decoded;
 }
 
-async function startPlayback(trackId, offset = pausedAt) {
-  stopSource();
-  await loadTrack(trackId);
+function getNextTrackId() {
+  if (!state.currentTrackId) return null;
+  const availableQueue = queueTrackIds.length ? queueTrackIds : [state.currentTrackId];
+  const currentIndex = availableQueue.indexOf(state.currentTrackId);
+  if (currentIndex < 0) return availableQueue[0] || state.currentTrackId;
+  return availableQueue[(currentIndex + 1) % availableQueue.length];
+}
+
+function createSource(buffer, initialGain = 1) {
+  const node = audioContext.createBufferSource();
+  const nodeGain = audioContext.createGain();
+  node.buffer = buffer;
+  node.loop = false;
+  nodeGain.gain.value = initialGain;
+  node.connect(nodeGain);
+  nodeGain.connect(masterGainNode);
+  return { node, nodeGain };
+}
+
+function attachEndHandler(node, generation) {
+  node.onended = () => {
+    if (generation !== playbackGeneration || !state.isPlaying || transitionSourceNode) return;
+    if (!state.loopEnabled) {
+      finishPlayback();
+      return;
+    }
+
+    const nextTrackId = getNextTrackId();
+    if (!nextTrackId) return;
+    startPlayback(nextTrackId, 0, queueTrackIds).catch(async (error) => {
+      state.isPlaying = false;
+      state.error = error.message || "Не удалось продолжить воспроизведение.";
+      stopAllSources();
+      await emitState();
+    });
+  };
+}
+
+async function scheduleTransition(generation = playbackGeneration) {
+  if (transitionSourceNode) return;
+  clearTransitionTimers();
+  if (!state.isPlaying || !state.loopEnabled || !sourceNode) return;
+
+  const nextTrackId = getNextTrackId();
+  if (!nextTrackId) return;
+
+  const nextBuffer = await getTrackBuffer(nextTrackId);
+  if (generation !== playbackGeneration || !state.isPlaying) return;
+
+  const remaining = Math.max(0, state.duration - getCurrentTime());
+  const fadeDuration = Math.min(
+    CROSSFADE_SECONDS,
+    state.duration / 2,
+    nextBuffer.duration / 2,
+    remaining,
+  );
+
+  if (fadeDuration <= 0.05) return;
+  const delay = Math.max(0, remaining - fadeDuration);
+  transitionTimer = setTimeout(
+    () => beginTransition(nextTrackId, nextBuffer, fadeDuration, generation),
+    delay * 1000,
+  );
+}
+
+function beginTransition(nextTrackId, nextBuffer, fadeDuration, generation) {
+  if (generation !== playbackGeneration || !state.isPlaying || !sourceNode || transitionSourceNode) return;
+
+  const now = audioContext.currentTime;
+  const incoming = createSource(nextBuffer, 0);
+  transitionSourceNode = incoming.node;
+  transitionGainNode = incoming.nodeGain;
+  transitionTrackId = nextTrackId;
+  transitionBuffer = nextBuffer;
+  transitionStartedAt = now;
+
+  sourceGainNode.gain.cancelScheduledValues(now);
+  sourceGainNode.gain.setValueAtTime(sourceGainNode.gain.value, now);
+  sourceGainNode.gain.linearRampToValueAtTime(0, now + fadeDuration);
+  transitionGainNode.gain.setValueAtTime(0, now);
+  transitionGainNode.gain.linearRampToValueAtTime(1, now + fadeDuration);
+  transitionSourceNode.start(now);
+
+  transitionFinalizeTimer = setTimeout(
+    () => finalizeTransition(fadeDuration, generation),
+    fadeDuration * 1000,
+  );
+}
+
+async function finalizeTransition(fadeDuration, generation) {
+  if (generation !== playbackGeneration || !transitionSourceNode || !transitionBuffer) return;
+
+  stopNode(sourceNode);
+  sourceNode = transitionSourceNode;
+  sourceGainNode = transitionGainNode;
+  audioBuffer = transitionBuffer;
+  state.currentTrackId = transitionTrackId;
+  state.duration = audioBuffer.duration;
+  startedAt = transitionStartedAt;
+  pausedAt = Math.min(fadeDuration, state.duration);
+
+  transitionSourceNode = null;
+  transitionGainNode = null;
+  transitionTrackId = null;
+  transitionBuffer = null;
+  transitionFinalizeTimer = undefined;
+
+  attachEndHandler(sourceNode, generation);
+  await emitState();
+  await scheduleTransition(generation);
+}
+
+async function finishPlayback() {
+  state.isPlaying = false;
+  pausedAt = 0;
+  stopAllSources();
+  await emitState();
+}
+
+async function startPlayback(trackId, offset = pausedAt, trackIds) {
+  if (Array.isArray(trackIds) && trackIds.length) queueTrackIds = [...new Set(trackIds)];
+  stopAllSources();
+  const generation = playbackGeneration;
   ensureAudioGraph();
   await audioContext.resume();
 
-  const safeOffset = state.duration ? Math.max(0, offset) % state.duration : 0;
-  sourceNode = audioContext.createBufferSource();
-  sourceNode.buffer = audioBuffer;
-  sourceNode.loop = state.loopEnabled;
-  sourceNode.connect(gainNode);
-  sourceNode.onended = () => {
-    if (!state.loopEnabled && state.isPlaying) {
-      state.isPlaying = false;
-      pausedAt = 0;
-      emitState();
-    }
-  };
+  audioBuffer = await getTrackBuffer(trackId);
+  if (generation !== playbackGeneration) return;
+
+  state.currentTrackId = trackId;
+  state.duration = audioBuffer.duration;
+  const safeOffset = Math.min(Math.max(0, Number(offset) || 0), Math.max(0, state.duration - 0.01));
+  const current = createSource(audioBuffer, 1);
+  sourceNode = current.node;
+  sourceGainNode = current.nodeGain;
+  attachEndHandler(sourceNode, generation);
   sourceNode.start(0, safeOffset);
   startedAt = audioContext.currentTime - safeOffset;
   pausedAt = safeOffset;
   state.isPlaying = true;
   state.error = null;
   await emitState();
+  await scheduleTransition(generation);
 }
 
 async function pausePlayback() {
-  pausedAt = getCurrentTime();
+  if (transitionSourceNode && transitionBuffer) {
+    pausedAt = Math.max(0, audioContext.currentTime - transitionStartedAt);
+    state.currentTrackId = transitionTrackId;
+    state.duration = transitionBuffer.duration;
+    audioBuffer = transitionBuffer;
+  } else {
+    pausedAt = getCurrentTime();
+  }
+
   state.isPlaying = false;
-  stopSource();
+  stopAllSources();
   await emitState();
 }
 
 async function handleMessage(message) {
   switch (message.type) {
     case "play-track":
-      await startPlayback(message.trackId, 0);
+      await startPlayback(message.trackId, 0, message.trackIds);
       break;
     case "resume":
-      if (state.currentTrackId) await startPlayback(state.currentTrackId, pausedAt);
+      if (state.currentTrackId) await startPlayback(state.currentTrackId, pausedAt, message.trackIds);
       break;
     case "pause":
       await pausePlayback();
@@ -117,7 +269,7 @@ async function handleMessage(message) {
     case "seek": {
       pausedAt = Math.max(0, Math.min(Number(message.time) || 0, state.duration || 0));
       if (state.isPlaying && state.currentTrackId) {
-        await startPlayback(state.currentTrackId, pausedAt);
+        await startPlayback(state.currentTrackId, pausedAt, message.trackIds);
       } else {
         await emitState();
       }
@@ -126,13 +278,29 @@ async function handleMessage(message) {
     case "set-volume":
       state.volume = Math.max(0, Math.min(Number(message.volume) || 0, 1));
       ensureAudioGraph();
-      gainNode.gain.setTargetAtTime(state.volume, audioContext.currentTime, 0.025);
+      masterGainNode.gain.setTargetAtTime(state.volume, audioContext.currentTime, 0.025);
       await emitState();
       break;
     case "set-loop":
       state.loopEnabled = Boolean(message.enabled);
-      if (sourceNode) sourceNode.loop = state.loopEnabled;
+      if (!state.loopEnabled && transitionSourceNode) {
+        clearTransitionTimers();
+        stopNode(transitionSourceNode);
+        transitionSourceNode = null;
+        transitionGainNode = null;
+        transitionTrackId = null;
+        transitionBuffer = null;
+        const now = audioContext.currentTime;
+        sourceGainNode.gain.cancelScheduledValues(now);
+        sourceGainNode.gain.setValueAtTime(1, now);
+      } else if (state.isPlaying) {
+        await scheduleTransition(playbackGeneration);
+      }
       await emitState();
+      break;
+    case "set-queue":
+      queueTrackIds = Array.isArray(message.trackIds) ? [...new Set(message.trackIds)] : [];
+      if (state.isPlaying) await scheduleTransition(playbackGeneration);
       break;
     case "stop":
       state.isPlaying = false;
@@ -140,7 +308,7 @@ async function handleMessage(message) {
       state.duration = 0;
       pausedAt = 0;
       audioBuffer = null;
-      stopSource();
+      stopAllSources();
       await emitState();
       break;
     case "get-state":
@@ -149,7 +317,7 @@ async function handleMessage(message) {
     case "hydrate-state":
       Object.assign(state, message.state, { isPlaying: false, error: null });
       pausedAt = Number(state.currentTime) || 0;
-      if (gainNode) gainNode.gain.value = state.volume;
+      if (masterGainNode) masterGainNode.gain.value = state.volume;
       break;
   }
 }
@@ -157,9 +325,9 @@ async function handleMessage(message) {
 chrome.runtime.onMessage.addListener((message) => {
   if (message?.target !== "offscreen") return;
   handleMessage(message).catch(async (error) => {
-    loadingTrackId = null;
     state.isPlaying = false;
     state.error = error.message || "Не удалось воспроизвести трек.";
+    stopAllSources();
     await emitState();
   });
 });
