@@ -5,6 +5,13 @@
 <h1 align="center">Тихий кадр</h1>
 
 <p align="center">
+  <strong>Русский</strong> ·
+  <a href="./docs/README.en.md">English</a> ·
+  <a href="./docs/README.ja.md">日本語</a> ·
+  <a href="./docs/README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   Фоновая музыка без пауз для спокойного чтения манги.<br />
   Локально, минималистично и без отправки файлов в облако.
 </p>
@@ -94,7 +101,7 @@ flowchart LR
     SW -->|команды через runtime| O[Offscreen Document]
     O -->|читает аудиофайл| IDB
     O --> WA[Web Audio API]
-    WA -->|loop| A[Аудиовыход]
+    WA -->|crossfade + loop| A[Аудиовыход]
     O -->|playback state| SW
     SW --> CS[(chrome.storage.local)]
     SW -->|обновление состояния| P
@@ -116,11 +123,11 @@ sequenceDiagram
     participant DB as IndexedDB
 
     Reader->>Popup: Выбирает трек
-    Popup->>Worker: play-track(trackId)
+    Popup->>Worker: play-track(trackId, queue)
     Worker->>Audio: Команда воспроизведения
-    Audio->>DB: Получить Blob
-    DB-->>Audio: Аудиофайл
-    Audio->>Audio: decodeAudioData + loop
+    Audio->>DB: Получить текущий и следующий Blob
+    DB-->>Audio: Аудиофайлы
+    Audio->>Audio: decodeAudioData + preload + crossfade
     Audio-->>Worker: Playback state
     Worker-->>Popup: Прогресс и состояние
 ```
@@ -155,6 +162,7 @@ music/
 ├── design/
 │   ├── popup-concept.png      # Исходный визуальный концепт
 │   └── popup-implementation.png
+├── docs/                      # Переводы README
 ├── db.js                      # Работа с IndexedDB
 ├── manifest.json              # Manifest V3 и разрешения
 ├── offscreen.html
@@ -245,12 +253,6 @@ node --check offscreen.js
   <br />
   Расширение принимает аудиоформаты, которые умеет декодировать установленная версия Chrome, включая распространённые MP3, WAV, OGG и M4A/AAC.
 </details>
-
-## Лицензия
-
-Лицензия пока не выбрана. До добавления файла `LICENSE` исходный код доступен для просмотра, однако стандартные права на копирование, изменение и распространение автоматически не предоставляются.
-
-Если проект должен стать полноценным open-source, перед публикацией выберите подходящую лицензию — например, MIT или Apache-2.0 — и добавьте её отдельным файлом.
 
 ---
 
