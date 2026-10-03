@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Тихий кадр</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="brand-bar">
+        <div class="brand-mark" aria-hidden="true">
+          <img src="assets/icons/icon48.png" alt="" />
+        </div>
+        <div class="brand-copy">
+          <h1>Тихий кадр</h1>
+          <p>Музыка для чтения</p>
+        </div>
+        <button class="icon-button quiet" id="loopTopButton" type="button" aria-label="Переключить повтор" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 0 0 4.9 9M4 5v4h4M6.3 17.7A8 8 0 0 0 19.1 15M20 19v-4h-4" /></svg>
+        </button>
+      </header>
+
+      <section class="player" aria-label="Сейчас играет">
+        <img class="cover" src="assets/night-cover-512.png" alt="Ночной пейзаж с луной над озером" />
+
+        <div class="player-content">
+          <div class="track-heading">
+            <h2 id="currentTitle">Добавьте музыку</h2>
+            <p id="currentFile">Поддерживаются аудиофайлы</p>
+          </div>
+
+          <div class="progress-wrap">
+            <input id="progress" class="range progress" type="range" min="0" max="100" value="0" step="0.1" aria-label="Позиция воспроизведения" disabled />
+            <div class="time-row" aria-live="off">
+              <span id="currentTime">00:00</span>
+              <span id="duration">00:00</span>
+            </div>
+          </div>
+
+          <div class="transport" aria-label="Управление воспроизведением">
+            <button class="icon-button transport-skip" id="previousButton" type="button" aria-label="Предыдущий трек" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14M18 6.5 9 12l9 5.5v-11Z" /></svg>
+            </button>
+            <button class="play-button" id="playButton" type="button" aria-label="Воспроизвести" disabled>
+              <svg class="play-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8.5 5.5 10 6.5-10 6.5v-13Z" /></svg>
+              <svg class="pause-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6v12M16 6v12" /></svg>
+            </button>
+            <button class="icon-button transport-skip" id="nextButton" type="button" aria-label="Следующий трек" disabled>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14M6 6.5l9 5.5-9 5.5v-11Z" /></svg>
+            </button>
+          </div>
+
+          <div class="volume-row">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 10v4h3l4 3V7l-4 3H5ZM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" /></svg>
+            <label for="volume">Громкость</label>
+            <input id="volume" class="range volume" type="range" min="0" max="1" value="0.72" step="0.01" />
+          </div>
+        </div>
+      </section>
+
+      <section class="library" aria-labelledby="libraryTitle">
+        <div class="library-header">
+          <h2 id="libraryTitle">Моя музыка</h2>
+          <button class="add-button" id="addButton" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            Добавить трек
+          </button>
+          <input id="fileInput" type="file" accept="audio/*" multiple hidden />
+        </div>
+
+        <div class="track-list" id="trackList"></div>
+
+        <div class="empty-state" id="emptyState">
+          <span class="empty-line" aria-hidden="true"></span>
+          <p>Здесь появятся ваши мелодии</p>
+          <button id="emptyAddButton" type="button">Выбрать аудиофайл</button>
+        </div>
+      </section>
+
+      <footer>
+        <button class="loop-status" id="loopButton" type="button" aria-pressed="true">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 6.3A8 8 0 0 0 4.9 9M4 5v4h4M6.3 17.7A8 8 0 0 0 19.1 15M20 19v-4h-4" /></svg>
+          <span>Повтор включён</span>
+        </button>
+        <span class="privacy-note">Всё хранится на устройстве</span>
+      </footer>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
